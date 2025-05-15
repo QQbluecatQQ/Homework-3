@@ -78,7 +78,7 @@ class MyPortfolio:
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
         lookback_window = self.lookback  # e.g. 365
-        feature_window = 30  # ML 預測期望報酬用的歷史天數
+        feature_window = 60  # ML 預測期望報酬用的歷史天數
         hidden_size = 64
         epochs = 50
         learning_rate = 0.001
