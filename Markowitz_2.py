@@ -132,7 +132,7 @@ class MyPortfolio:
             loss = criterion(outputs, y_train)
             loss.backward()
             optimizer.step()
-            print(f"Epoch [{epoch + 1}/{epochs}], Loss: {loss.item():.6f}")
+            # print(f"Epoch [{epoch + 1}/{epochs}], Loss: {loss.item():.6f}")
 
         # 開始預測測試區段的期望報酬，並使用 Gurobi 求權重
         self.portfolio_weights.iloc[:, :] = 0
