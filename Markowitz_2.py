@@ -50,7 +50,7 @@ class MyPortfolio:
     NOTE: You can modify the initialization function
     """
 
-    def __init__(self, price, exclude, lookback=50, gamma=0):
+    def __init__(self, price, exclude, lookback=365, gamma=0):
         self.price = price
         self.returns = price.pct_change().fillna(0)
         self.exclude = exclude
@@ -70,6 +70,98 @@ class MyPortfolio:
         TODO: Complete Task 4 Below
         """
 
+        import torch
+        import torch.nn as nn
+        from sklearn.preprocessing import StandardScaler
+        from gurobipy import GRB
+
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+        lookback_window = self.lookback  # e.g. 365
+        feature_window = 30  # ML 預測期望報酬用的歷史天數
+        hidden_size = 64
+        epochs = 50
+        learning_rate = 0.001
+
+        returns = self.returns[assets].copy()
+
+        # 特徵：過去 feature_window 天的日報酬率
+        X, y = [], []
+        for i in range(lookback_window, len(returns) - 1):
+            past_window = returns.iloc[i - feature_window:i].values
+            future_return = returns.iloc[i + 1].values  # 預測隔日報酬
+            X.append(past_window)
+            y.append(future_return)
+
+        X = np.array(X)  # (samples, time, features)
+        y = np.array(y)  # (samples, features)
+
+        # normalize
+        scaler_x = StandardScaler()
+        X = X.reshape(X.shape[0], -1)
+        X = scaler_x.fit_transform(X)
+        X = X.reshape(-1, feature_window, len(assets))
+
+        scaler_y = StandardScaler()
+        y = scaler_y.fit_transform(y)
+
+        X_train = torch.tensor(X, dtype=torch.float32).to(device)
+        y_train = torch.tensor(y, dtype=torch.float32).to(device)
+
+        # 定義簡單的 LSTM 模型
+        class LSTMModel(nn.Module):
+            def __init__(self, input_dim, hidden_dim, output_dim):
+                super().__init__()
+                self.lstm = nn.LSTM(input_dim, hidden_dim, batch_first=True)
+                self.fc = nn.Linear(hidden_dim, output_dim)
+
+            def forward(self, x):
+                _, (hn, _) = self.lstm(x)
+                out = self.fc(hn.squeeze(0))
+                return out
+
+        model = LSTMModel(len(assets), hidden_size, len(assets)).to(device)
+        criterion = nn.MSELoss()
+        optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
+
+        # 訓練模型
+        for epoch in range(epochs):
+            model.train()
+            optimizer.zero_grad()
+            outputs = model(X_train)
+            loss = criterion(outputs, y_train)
+            loss.backward()
+            optimizer.step()
+            print(f"Epoch [{epoch + 1}/{epochs}], Loss: {loss.item():.6f}")
+
+        # 開始預測測試區段的期望報酬，並使用 Gurobi 求權重
+        self.portfolio_weights.iloc[:, :] = 0
+        model.eval()
+        for i in range(lookback_window + feature_window, len(returns) - 1):
+            test_window = returns.iloc[i - feature_window:i].values
+            test_input = scaler_x.transform(test_window.reshape(1, -1)).reshape(1, feature_window, len(assets))
+            test_input = torch.tensor(test_input, dtype=torch.float32).to(device)
+            with torch.no_grad():
+                pred_return = model(test_input).cpu().numpy().flatten()
+            pred_return = scaler_y.inverse_transform(pred_return.reshape(1, -1)).flatten()
+
+            # covariance matrix from past window
+            cov = returns.iloc[i - feature_window:i].cov().values
+
+            try:
+                m = gp.Model()
+                w = m.addMVar(len(assets), lb=0, ub=1, name="w")
+                m.setObjective(pred_return @ w - self.gamma * w @ cov @ w, GRB.MAXIMIZE)
+                m.addConstr(w.sum() == 1)
+                m.setParam("OutputFlag", 0)
+                m.optimize()
+
+                weight_vec = pd.Series(0, index=self.price.columns)
+                weight_vec[assets] = w.X
+                self.portfolio_weights.iloc[i] = weight_vec
+            except:
+                continue            
+            
         """
         TODO: Complete Task 4 Above
         """

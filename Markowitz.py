@@ -61,6 +61,14 @@ class EqualWeightPortfolio:
         """
         TODO: Complete Task 1 Below
         """
+        num_assets = len(assets)
+        equal_weight = 1.0 / num_assets if num_assets > 0 else 0
+        for asset in df.columns:
+            if asset in assets:
+                self.portfolio_weights[asset] = equal_weight
+            else:
+                # 對排除的資產（例如 SPY）分配權重 0
+                self.portfolio_weights[asset] = 0   
 
         """
         TODO: Complete Task 1 Above
@@ -112,6 +120,34 @@ class RiskParityPortfolio:
         """
         TODO: Complete Task 2 Below
         """
+        equal_weight = 0
+        default_weights = pd.Series(equal_weight, index=assets)
+        
+        for t in range(len(df)):  # 涵蓋所有日期
+            if t <= self.lookback:
+                    # 早期日期使用等權重
+                weights = default_weights
+            else:
+                # 計算風險平價權重
+                returns_window = df_returns[assets].iloc[t - self.lookback:t]
+                volatilities = returns_window.std()
+                
+                # 檢查波動率是否有效
+                if volatilities.isna().any() or (volatilities == 0).any() or len(returns_window) < self.lookback:
+                    weights = default_weights
+                else:
+                    inverse_vol = 1.0 / volatilities
+                    total_inverse_vol = inverse_vol.sum()
+                    if pd.isna(total_inverse_vol) or total_inverse_vol == 0:
+                        weights = default_weights
+                    else:
+                        weights = inverse_vol / total_inverse_vol
+            
+            # 賦值權重
+            for asset in df.columns:
+                self.portfolio_weights.at[df.index[t], asset] = weights.get(asset, 0)
+            
+            self.portfolio_weights = self.portfolio_weights.ffill().fillna(0)
 
         """
         TODO: Complete Task 2 Above
@@ -184,12 +220,20 @@ class MeanVariancePortfolio:
                 """
                 TODO: Complete Task 3 Below
                 """
-
+                
                 # Sample Code: Initialize Decision w and the Objective
                 # NOTE: You can modify the following code
-                w = model.addMVar(n, name="w", ub=1)
-                model.setObjective(w.sum(), gp.GRB.MAXIMIZE)
+                w = model.addMVar(n, name="w", lb=0, ub=1)
+                
+                # 定義目標函數：最大化 mu @ w - gamma * w.T @ Sigma @ w
+                portfolio_return = mu @ w
+                portfolio_variance = w @ Sigma @ w
+                objective = portfolio_return - (gamma / 2) * portfolio_variance
+                model.setObjective(objective, gp.GRB.MAXIMIZE)
 
+                # 添加約束：權重總和為 1
+                model.addConstr(w.sum() == 1, name="sum_weights")
+                
                 """
                 TODO: Complete Task 3 Above
                 """
